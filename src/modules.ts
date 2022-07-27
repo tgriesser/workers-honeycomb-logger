@@ -205,15 +205,14 @@ function workerProxy<T>(config: ResolvedConfig, mod: ExportedHandler<T>): Export
 
 type DoFetch = DurableObject['fetch']
 
-function proxyObjFetch(config: ResolvedConfig, orig_fetch: DoFetch, do_name: string): DoFetch {
+function proxyObjFetch(config: ResolvedConfig, orig_fetch: DoFetch, do_name: string, env: HoneycombEnv): DoFetch {
   return new Proxy(orig_fetch, {
     apply: (target, thisArg, argArray): Promise<Response> => {
       const request = argArray[0] as Request
-
       const tracer = new RequestTracer(request, config)
 
-      const env = argArray[1] as HoneycombEnv
-      argArray[1] = proxyEnv(env, tracer)
+      request.tracer = tracer
+
       config.apiKey = env.HONEYCOMB_API_KEY || config.apiKey
       config.dataset = env.HONEYCOMB_DATASET || config.dataset
 
@@ -224,7 +223,6 @@ function proxyObjFetch(config: ResolvedConfig, orig_fetch: DoFetch, do_name: str
 
       tracer.eventMeta.service.name = do_name
       tracer.eventMeta.name = new URL(request.url).pathname
-      request.tracer = tracer
       try {
         const result: Response | Promise<Response> = Reflect.apply(target, thisArg, argArray)
         if (result instanceof Response) {
@@ -265,8 +263,9 @@ export function wrapDurableObject(cfg: Config, do_class: DOClass): DOClass {
   config.acceptTraceContext = true
   return new Proxy(do_class, {
     construct: (target, argArray) => {
+      const env = argArray[1] as HoneycombEnv
       const obj = new target(...argArray)
-      obj.fetch = proxyObjFetch(config, obj.fetch, do_class.name)
+      obj.fetch = proxyObjFetch(config, obj.fetch, do_class.name, env)
       return obj
     },
   })

@@ -186,13 +186,12 @@ function workerProxy(config, mod) {
         }),
     };
 }
-function proxyObjFetch(config, orig_fetch, do_name) {
+function proxyObjFetch(config, orig_fetch, do_name, env) {
     return new Proxy(orig_fetch, {
         apply: (target, thisArg, argArray) => {
             const request = argArray[0];
             const tracer = new logging_1.RequestTracer(request, config);
-            const env = argArray[1];
-            argArray[1] = proxyEnv(env, tracer);
+            request.tracer = tracer;
             config.apiKey = env.HONEYCOMB_API_KEY || config.apiKey;
             config.dataset = env.HONEYCOMB_DATASET || config.dataset;
             if (!config.apiKey || !config.dataset) {
@@ -201,7 +200,6 @@ function proxyObjFetch(config, orig_fetch, do_name) {
             }
             tracer.eventMeta.service.name = do_name;
             tracer.eventMeta.name = new URL(request.url).pathname;
-            request.tracer = tracer;
             try {
                 const result = Reflect.apply(target, thisArg, argArray);
                 if (result instanceof Response) {
@@ -241,8 +239,9 @@ function wrapDurableObject(cfg, do_class) {
     config.acceptTraceContext = true;
     return new Proxy(do_class, {
         construct: (target, argArray) => {
+            const env = argArray[1];
             const obj = new target(...argArray);
-            obj.fetch = proxyObjFetch(config, obj.fetch, do_class.name);
+            obj.fetch = proxyObjFetch(config, obj.fetch, do_class.name, env);
             return obj;
         },
     });
